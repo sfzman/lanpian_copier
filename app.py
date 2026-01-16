@@ -444,6 +444,7 @@ def create_video_from_frames(
     logger.info(f"正在编码输出视频: {output_path}")
     clip.write_videofile(
         output_path,
+        fps=fps,
         codec='libx264',
         audio_codec='aac',
         logger=None,
