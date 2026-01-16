@@ -359,6 +359,7 @@ def create_video_from_frames(
     frame_paths: list[str],
     output_path: str,
     fps: float,
+    frame_duration: float,
     audio_path: str | None = None,
     pan_range: float = 0.0,
 ) -> str:
@@ -368,7 +369,8 @@ def create_video_from_frames(
     Args:
         frame_paths: 帧文件路径列表
         output_path: 输出视频路径
-        fps: 帧率
+        fps: 输出视频帧率（如24fps保证流畅）
+        frame_duration: 每张图片的显示时长（秒）
         audio_path: 音频文件路径（可选）
         pan_range: 平移动效范围比例（如 0.05 表示 5%），0 表示无动效
 
@@ -376,7 +378,7 @@ def create_video_from_frames(
         输出视频路径
     """
     pan_enabled = pan_range > 0
-    logger.info(f"开始创建视频: {len(frame_paths)} 帧, {fps}fps, 平移动效: {'启用 ' + str(int(pan_range*100)) + '%' if pan_enabled else '关闭'}")
+    logger.info(f"开始创建视频: {len(frame_paths)} 帧, {fps}fps, 每帧显示{frame_duration}秒, 平移动效: {'启用 ' + str(int(pan_range*100)) + '%' if pan_enabled else '关闭'}")
     from moviepy import ImageSequenceClip, AudioFileClip, concatenate_videoclips
 
     # 检查并统一所有帧的尺寸
@@ -407,8 +409,6 @@ def create_video_from_frames(
     if pan_enabled:
         # 使用平移动效：为每张图片创建带平移效果的clip，然后拼接
         logger.info("正在为每帧创建平移动效...")
-        # 计算每帧的持续时间
-        frame_duration = 1.0 / fps
         clips = []
         for i, frame_path in enumerate(frame_paths):
             pan_clip = create_pan_effect_clip(
@@ -425,8 +425,9 @@ def create_video_from_frames(
         clip = concatenate_videoclips(clips, method="compose")
         logger.info(f"平移动效视频片段创建完成, 时长: {clip.duration:.2f}秒")
     else:
-        # 无平移动效，使用原有方式
-        clip = ImageSequenceClip(frame_paths, fps=fps)
+        # 无平移动效：fps = 1/frame_duration 使每帧显示 frame_duration 秒
+        sequence_fps = 1.0 / frame_duration
+        clip = ImageSequenceClip(frame_paths, fps=sequence_fps)
         logger.info(f"视频片段创建完成, 时长: {clip.duration:.2f}秒")
 
     # 添加音频
@@ -547,7 +548,10 @@ def process_video(
         logger.info("[步骤4/4] 开始合成视频...")
         progress(0.9, desc="正在合成视频...")
         output_video_path = str(work_dir / "output.mp4")
-        create_video_from_frames(edited_paths, output_video_path, fps, audio_path, pan_range_ratio)
+        # fps=24 保证视频流畅，frame_duration=interval 让每张图片显示 interval 秒
+        output_fps = 24.0
+        logger.info(f"输出视频帧率: {output_fps:.0f}fps, 每帧显示{interval}秒")
+        create_video_from_frames(edited_paths, output_video_path, output_fps, interval, audio_path, pan_range_ratio)
 
         progress(1.0, desc="处理完成!")
 
