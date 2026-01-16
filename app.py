@@ -97,7 +97,7 @@ def extract_audio(video_path: str, output_dir: Path) -> str | None:
         video = VideoFileClip(video_path)
 
         if video.audio is not None:
-            video.audio.write_audiofile(str(audio_path), verbose=False, logger=None)
+            video.audio.write_audiofile(str(audio_path), logger=None)
             video.close()
             return str(audio_path)
 
@@ -275,7 +275,6 @@ def create_video_from_frames(
         output_path,
         codec='libx264',
         audio_codec='aac',
-        verbose=False,
         logger=None,
     )
 
