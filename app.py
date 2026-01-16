@@ -547,7 +547,10 @@ def process_video(
         logger.info("[步骤4/4] 开始合成视频...")
         progress(0.9, desc="正在合成视频...")
         output_video_path = str(work_dir / "output.mp4")
-        create_video_from_frames(edited_paths, output_video_path, fps, audio_path, pan_range_ratio)
+        # 输出视频的fps应该基于提取间隔：每帧显示 interval 秒
+        output_fps = 1.0 / interval
+        logger.info(f"输出视频帧率: {output_fps:.2f}fps (每帧显示{interval}秒)")
+        create_video_from_frames(edited_paths, output_video_path, output_fps, audio_path, pan_range_ratio)
 
         progress(1.0, desc="处理完成!")
 
