@@ -487,7 +487,7 @@ def create_ui():
                         label="并行处理数",
                         minimum=1,
                         maximum=5,
-                        value=3,
+                        value=2,
                         step=1,
                         info="同时处理的帧数，建议2-3",
                     )
