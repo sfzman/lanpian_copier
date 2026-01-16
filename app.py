@@ -286,6 +286,30 @@ def create_video_from_frames(
     logger.info(f"开始创建视频: {len(frame_paths)} 帧, {fps}fps")
     from moviepy import ImageSequenceClip, AudioFileClip
 
+    # 检查并统一所有帧的尺寸
+    logger.info("检查帧尺寸...")
+    frame_sizes = []
+    for path in frame_paths:
+        img = Image.open(path)
+        frame_sizes.append(img.size)
+        img.close()
+
+    # 使用第一帧的尺寸作为目标尺寸
+    target_size = frame_sizes[0]
+    size_mismatch = any(size != target_size for size in frame_sizes)
+
+    if size_mismatch:
+        logger.warning(f"检测到帧尺寸不一致，将统一调整为 {target_size[0]}x{target_size[1]}")
+        for i, (path, size) in enumerate(zip(frame_paths, frame_sizes)):
+            if size != target_size:
+                logger.debug(f"调整帧 {i} 尺寸: {size} -> {target_size}")
+                img = Image.open(path)
+                img_resized = img.resize(target_size, Image.Resampling.LANCZOS)
+                img_resized.save(path)
+                img.close()
+                img_resized.close()
+        logger.info("帧尺寸统一完成")
+
     # 创建视频
     clip = ImageSequenceClip(frame_paths, fps=fps)
     logger.info(f"视频片段创建完成, 时长: {clip.duration:.2f}秒")
