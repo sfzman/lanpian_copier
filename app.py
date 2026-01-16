@@ -453,7 +453,7 @@ def create_ui():
                     interval_input = gr.Slider(
                         label="帧提取间隔（秒）",
                         minimum=0.1,
-                        maximum=5.0,
+                        maximum=10.0,
                         value=1.0,
                         step=0.1,
                         info="间隔越小，帧数越多，处理时间越长",
