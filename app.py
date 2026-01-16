@@ -11,6 +11,7 @@ from pathlib import Path
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+import random
 import cv2
 import numpy as np
 from PIL import Image
@@ -265,11 +266,101 @@ def process_frames_parallel(
     return edited_paths
 
 
+def create_pan_effect_clip(
+    image_path: str,
+    duration: float,
+    target_size: tuple[int, int],
+    pan_range: float,
+    fps: float,
+) -> "ImageClip":
+    """
+    为单张图片创建平移动效的视频片段
+
+    Args:
+        image_path: 图片路径
+        duration: 片段时长（秒）
+        target_size: 目标尺寸 (宽度, 高度)
+        pan_range: 平移范围比例（如 0.05 表示 5%）
+        fps: 帧率
+
+    Returns:
+        带平移动效的视频片段
+    """
+    from moviepy import ImageClip
+
+    # 加载原图并放大
+    img = Image.open(image_path)
+    original_size = img.size
+
+    # 计算放大后的尺寸（放大 pan_range * 2 以确保有足够的移动空间）
+    scale_factor = 1 + pan_range * 2
+    enlarged_size = (
+        int(target_size[0] * scale_factor),
+        int(target_size[1] * scale_factor),
+    )
+
+    # 放大图片
+    img_enlarged = img.resize(enlarged_size, Image.Resampling.LANCZOS)
+    img.close()
+
+    # 保存放大后的临时图片
+    temp_dir = Path(image_path).parent
+    temp_path = temp_dir / f"_temp_enlarged_{Path(image_path).stem}.png"
+    img_enlarged.save(temp_path)
+    img_enlarged.close()
+
+    # 计算最大偏移量
+    max_offset_x = enlarged_size[0] - target_size[0]
+    max_offset_y = enlarged_size[1] - target_size[1]
+
+    # 随机选择平移方向：0=左到右, 1=右到左, 2=上到下, 3=下到上
+    direction = random.randint(0, 3)
+
+    # 设置起始和结束位置
+    if direction == 0:  # 左到右
+        start_x, end_x = 0, max_offset_x
+        start_y = end_y = max_offset_y // 2
+    elif direction == 1:  # 右到左
+        start_x, end_x = max_offset_x, 0
+        start_y = end_y = max_offset_y // 2
+    elif direction == 2:  # 上到下
+        start_x = end_x = max_offset_x // 2
+        start_y, end_y = 0, max_offset_y
+    else:  # 下到上
+        start_x = end_x = max_offset_x // 2
+        start_y, end_y = max_offset_y, 0
+
+    # 创建图片clip
+    clip = ImageClip(str(temp_path)).with_duration(duration)
+
+    # 定义裁剪函数实现平移效果
+    def make_frame(get_frame, t):
+        # 计算当前时间的进度（0到1）
+        progress = t / duration if duration > 0 else 0
+        # 线性插值计算当前偏移
+        current_x = int(start_x + (end_x - start_x) * progress)
+        current_y = int(start_y + (end_y - start_y) * progress)
+        # 获取当前帧并裁剪
+        frame = get_frame(t)
+        cropped = frame[current_y:current_y + target_size[1], current_x:current_x + target_size[0]]
+        return cropped
+
+    # 应用平移效果
+    clip = clip.transform(make_frame)
+
+    # 删除临时文件
+    if temp_path.exists():
+        temp_path.unlink()
+
+    return clip
+
+
 def create_video_from_frames(
     frame_paths: list[str],
     output_path: str,
     fps: float,
     audio_path: str | None = None,
+    pan_range: float = 0.0,
 ) -> str:
     """
     从帧序列创建视频
@@ -279,12 +370,14 @@ def create_video_from_frames(
         output_path: 输出视频路径
         fps: 帧率
         audio_path: 音频文件路径（可选）
+        pan_range: 平移动效范围比例（如 0.05 表示 5%），0 表示无动效
 
     Returns:
         输出视频路径
     """
-    logger.info(f"开始创建视频: {len(frame_paths)} 帧, {fps}fps")
-    from moviepy import ImageSequenceClip, AudioFileClip
+    pan_enabled = pan_range > 0
+    logger.info(f"开始创建视频: {len(frame_paths)} 帧, {fps}fps, 平移动效: {'启用 ' + str(int(pan_range*100)) + '%' if pan_enabled else '关闭'}")
+    from moviepy import ImageSequenceClip, AudioFileClip, concatenate_videoclips
 
     # 检查并统一所有帧的尺寸
     logger.info("检查帧尺寸...")
@@ -311,10 +404,33 @@ def create_video_from_frames(
         logger.info("帧尺寸统一完成")
 
     # 创建视频
-    clip = ImageSequenceClip(frame_paths, fps=fps)
-    logger.info(f"视频片段创建完成, 时长: {clip.duration:.2f}秒")
+    if pan_enabled:
+        # 使用平移动效：为每张图片创建带平移效果的clip，然后拼接
+        logger.info("正在为每帧创建平移动效...")
+        # 计算每帧的持续时间
+        frame_duration = 1.0 / fps
+        clips = []
+        for i, frame_path in enumerate(frame_paths):
+            pan_clip = create_pan_effect_clip(
+                frame_path,
+                duration=frame_duration,
+                target_size=target_size,
+                pan_range=pan_range,
+                fps=fps,
+            )
+            clips.append(pan_clip)
+            if (i + 1) % 10 == 0:
+                logger.debug(f"已处理 {i + 1}/{len(frame_paths)} 帧的平移动效")
+        # 拼接所有clip
+        clip = concatenate_videoclips(clips, method="compose")
+        logger.info(f"平移动效视频片段创建完成, 时长: {clip.duration:.2f}秒")
+    else:
+        # 无平移动效，使用原有方式
+        clip = ImageSequenceClip(frame_paths, fps=fps)
+        logger.info(f"视频片段创建完成, 时长: {clip.duration:.2f}秒")
 
     # 添加音频
+    audio = None
     if audio_path and os.path.exists(audio_path):
         logger.info(f"正在添加音频: {audio_path}")
         audio = AudioFileClip(audio_path)
@@ -334,7 +450,7 @@ def create_video_from_frames(
     )
 
     clip.close()
-    if audio_path and os.path.exists(audio_path):
+    if audio is not None:
         audio.close()
 
     logger.info(f"视频创建完成: {output_path}")
@@ -348,10 +464,21 @@ def process_video(
     api_key: str,
     output_size: str,
     max_workers: int,
+    pan_range: float,
     progress=gr.Progress(),
 ) -> tuple[str, list[tuple[str, str]], str]:
     """
     处理视频的主函数
+
+    Args:
+        video_path: 视频文件路径
+        interval: 帧提取间隔（秒）
+        prompt: 编辑指令
+        api_key: API密钥
+        output_size: 输出尺寸
+        max_workers: 并行处理数
+        pan_range: 平移动效范围（0-20%）
+        progress: 进度回调
 
     Returns:
         (输出视频路径, 预览图片列表, 状态消息)
@@ -372,7 +499,10 @@ def process_video(
     logger.info(f"========== 开始处理视频 ==========")
     logger.info(f"视频路径: {video_path}")
     logger.info(f"工作目录: {work_dir}")
-    logger.info(f"参数: 间隔={interval}秒, 并行数={max_workers}, 尺寸={output_size}")
+    # pan_range 从 UI 传入的是百分比值（0-20），转换为比例（0-0.20）
+    pan_range_ratio = pan_range / 100.0
+    pan_range_pct = int(pan_range)
+    logger.info(f"参数: 间隔={interval}秒, 并行数={max_workers}, 尺寸={output_size}, 平移动效={pan_range_pct}%")
 
     try:
         # 步骤1: 提取帧
@@ -416,7 +546,7 @@ def process_video(
         logger.info("[步骤4/4] 开始合成视频...")
         progress(0.9, desc="正在合成视频...")
         output_video_path = str(work_dir / "output.mp4")
-        create_video_from_frames(edited_paths, output_video_path, fps, audio_path)
+        create_video_from_frames(edited_paths, output_video_path, fps, audio_path, pan_range_ratio)
 
         progress(1.0, desc="处理完成!")
 
@@ -499,6 +629,15 @@ def create_ui():
                     info="设置编辑后图片的分辨率",
                 )
 
+                pan_range_input = gr.Slider(
+                    label="平移动效范围（%）",
+                    minimum=0,
+                    maximum=20,
+                    value=0,
+                    step=1,
+                    info="图片平移范围，0表示关闭，5-10%效果较自然，方向随机",
+                )
+
                 process_btn = gr.Button("🚀 开始处理", variant="primary", size="lg")
 
             with gr.Column(scale=1):
@@ -564,6 +703,7 @@ def create_ui():
                 api_key_input,
                 size_input,
                 workers_input,
+                pan_range_input,
             ],
             outputs=[video_output, preview_gallery, status_output],
             show_progress=True,
