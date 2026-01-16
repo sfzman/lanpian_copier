@@ -21,7 +21,11 @@ video-style-editor = "app:main"
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
-[tool.uv]
-dev-dependencies = [
+[tool.hatch.build.targets.wheel]
+packages = ["."]
+only-include = ["app.py"]
+
+[dependency-groups]
+dev = [
     "pytest>=8.0.0",
 ]
