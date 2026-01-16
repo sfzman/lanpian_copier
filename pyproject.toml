@@ -1,0 +1,27 @@
+[project]
+name = "video-style-editor"
+version = "0.1.0"
+description = "A Gradio app for video style editing using Qwen Image Edit API"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "gradio>=5.0.0",
+    "dashscope>=1.20.0",
+    "opencv-python>=4.9.0",
+    "pillow>=10.0.0",
+    "numpy>=1.26.0",
+    "moviepy>=2.0.0",
+    "python-dotenv>=1.0.0",
+]
+
+[project.scripts]
+video-style-editor = "app:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.uv]
+dev-dependencies = [
+    "pytest>=8.0.0",
+]
