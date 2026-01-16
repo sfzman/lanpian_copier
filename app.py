@@ -16,6 +16,15 @@ import numpy as np
 from PIL import Image
 import gradio as gr
 from dotenv import load_dotenv
+import logging
+
+# 配置日志
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+logger = logging.getLogger(__name__)
 
 # 加载环境变量
 load_dotenv()
@@ -48,8 +57,10 @@ def extract_frames(video_path: str, interval: float, output_dir: Path) -> tuple[
     Returns:
         (帧文件路径列表, fps, (宽度, 高度))
     """
+    logger.info(f"开始提取帧: {video_path}, 间隔: {interval}秒")
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
+        logger.error(f"无法打开视频文件: {video_path}")
         raise ValueError(f"无法打开视频文件: {video_path}")
 
     fps = cap.get(cv2.CAP_PROP_FPS)
@@ -57,6 +68,7 @@ def extract_frames(video_path: str, interval: float, output_dir: Path) -> tuple[
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     duration = total_frames / fps
+    logger.info(f"视频信息: {width}x{height}, {fps:.2f}fps, 总帧数: {total_frames}, 时长: {duration:.2f}秒")
 
     # 计算要提取的帧
     frame_interval = int(fps * interval)
@@ -84,12 +96,14 @@ def extract_frames(video_path: str, interval: float, output_dir: Path) -> tuple[
         frame_idx += 1
 
     cap.release()
+    logger.info(f"帧提取完成: 共提取 {extracted_count} 帧")
 
     return frame_paths, fps, (width, height)
 
 
 def extract_audio(video_path: str, output_dir: Path) -> str | None:
     """从视频中提取音频"""
+    logger.info(f"开始提取音频: {video_path}")
     try:
         from moviepy import VideoFileClip
 
@@ -97,14 +111,17 @@ def extract_audio(video_path: str, output_dir: Path) -> str | None:
         video = VideoFileClip(video_path)
 
         if video.audio is not None:
-            video.audio.write_audiofile(str(audio_path), verbose=False, logger=None)
+            logger.info("检测到音频轨道，正在提取...")
+            video.audio.write_audiofile(str(audio_path), logger=None)
             video.close()
+            logger.info(f"音频提取完成: {audio_path}")
             return str(audio_path)
 
         video.close()
+        logger.info("视频没有音频轨道")
         return None
     except Exception as e:
-        print(f"提取音频失败: {e}")
+        logger.error(f"提取音频失败: {e}")
         return None
 
 
@@ -161,21 +178,26 @@ def call_qwen_image_edit(
     if size:
         kwargs["size"] = size
 
+    logger.debug(f"调用Qwen API处理图片: {image_path}")
     response = MultiModalConversation.call(**kwargs)
 
     if response.status_code == 200:
         # 获取生成的图片URL
         image_url = response.output.choices[0].message.content[0]['image']
+        logger.debug(f"API返回成功，正在下载图片...")
 
         # 下载图片
         img_response = requests.get(image_url)
         if img_response.status_code == 200:
             with open(output_path, 'wb') as f:
                 f.write(img_response.content)
+            logger.debug(f"图片保存完成: {output_path}")
             return output_path
         else:
+            logger.error(f"下载图片失败: HTTP {img_response.status_code}")
             raise Exception(f"下载图片失败: HTTP {img_response.status_code}")
     else:
+        logger.error(f"API调用失败: {response.code} - {response.message}")
         raise Exception(f"API调用失败: {response.code} - {response.message}")
 
 
@@ -203,6 +225,7 @@ def process_frames_parallel(
     Returns:
         编辑后的帧路径列表
     """
+    logger.info(f"开始并行处理帧: 共 {len(frame_paths)} 帧, 并行数: {max_workers}")
     edited_dir = output_dir / "edited_frames"
     edited_dir.mkdir(exist_ok=True)
 
@@ -231,11 +254,14 @@ def process_frames_parallel(
             completed += 1
 
             if error:
-                print(f"帧 {idx} 处理出错: {error}")
+                logger.warning(f"帧 {idx} 处理出错: {error}")
+            else:
+                logger.info(f"帧 {idx} 处理完成 ({completed}/{total})")
 
             if progress_callback:
                 progress_callback(completed / total, f"已处理 {completed}/{total} 帧")
 
+    logger.info(f"所有帧处理完成: {completed}/{total}")
     return edited_paths
 
 
@@ -257,25 +283,29 @@ def create_video_from_frames(
     Returns:
         输出视频路径
     """
+    logger.info(f"开始创建视频: {len(frame_paths)} 帧, {fps}fps")
     from moviepy import ImageSequenceClip, AudioFileClip
 
     # 创建视频
     clip = ImageSequenceClip(frame_paths, fps=fps)
+    logger.info(f"视频片段创建完成, 时长: {clip.duration:.2f}秒")
 
     # 添加音频
     if audio_path and os.path.exists(audio_path):
+        logger.info(f"正在添加音频: {audio_path}")
         audio = AudioFileClip(audio_path)
         # 确保音频长度与视频匹配
         if audio.duration > clip.duration:
             audio = audio.subclipped(0, clip.duration)
         clip = clip.with_audio(audio)
+        logger.info("音频添加完成")
 
     # 输出视频
+    logger.info(f"正在编码输出视频: {output_path}")
     clip.write_videofile(
         output_path,
         codec='libx264',
         audio_codec='aac',
-        verbose=False,
         logger=None,
     )
 
@@ -283,6 +313,7 @@ def create_video_from_frames(
     if audio_path and os.path.exists(audio_path):
         audio.close()
 
+    logger.info(f"视频创建完成: {output_path}")
     return output_path
 
 
@@ -314,22 +345,30 @@ def process_video(
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     work_dir = DEFAULT_OUTPUT_DIR / f"job_{timestamp}"
     work_dir.mkdir(parents=True, exist_ok=True)
+    logger.info(f"========== 开始处理视频 ==========")
+    logger.info(f"视频路径: {video_path}")
+    logger.info(f"工作目录: {work_dir}")
+    logger.info(f"参数: 间隔={interval}秒, 并行数={max_workers}, 尺寸={output_size}")
 
     try:
         # 步骤1: 提取帧
+        logger.info("[步骤1/4] 开始提取视频帧...")
         progress(0.1, desc="正在提取视频帧...")
         frame_paths, fps, (width, height) = extract_frames(video_path, interval, work_dir)
 
         if not frame_paths:
+            logger.error("无法从视频中提取帧")
             return None, [], "无法从视频中提取帧"
 
         progress(0.15, desc=f"已提取 {len(frame_paths)} 帧")
 
         # 步骤2: 提取音频
+        logger.info("[步骤2/4] 开始提取音频...")
         progress(0.2, desc="正在提取音频...")
         audio_path = extract_audio(video_path, work_dir)
 
         # 步骤3: 处理帧
+        logger.info("[步骤3/4] 开始处理帧...")
         progress(0.25, desc="正在处理帧...")
 
         # 解析输出尺寸
@@ -350,6 +389,7 @@ def process_video(
         )
 
         # 步骤4: 生成视频
+        logger.info("[步骤4/4] 开始合成视频...")
         progress(0.9, desc="正在合成视频...")
         output_video_path = str(work_dir / "output.mp4")
         create_video_from_frames(edited_paths, output_video_path, fps, audio_path)
@@ -365,9 +405,12 @@ def process_video(
                 preview_images.append((edited_paths[i], f"编辑后 {i+1}"))
 
         status = f"处理完成! 共处理 {len(frame_paths)} 帧，输出视频: {output_video_path}"
+        logger.info(f"========== 视频处理完成 ==========")
+        logger.info(f"输出文件: {output_video_path}")
         return output_video_path, preview_images, status
 
     except Exception as e:
+        logger.error(f"处理失败: {str(e)}", exc_info=True)
         return None, [], f"处理失败: {str(e)}"
 
 
